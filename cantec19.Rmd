@@ -1,0 +1,787 @@
+---
+title: "cantec19"
+author: "Kate"
+date: "11/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ProjectTemplate)
+#create.project(template = "minimal")
+load.project()
+
+select <- dplyr::select #prevent masking of select by other packages
+
+set.seed(20220518)
+ggplot2::theme_set(ggplot2::theme_bw())  # pre-set the bw theme.
+
+theme_gtsummary_journal("nejm", set_theme = TRUE)
+```
+
+```{r organize data}
+data <- read.csv(here::here("data", "cantec19_july2021norepeatsubmissions.csv"))
+#skim(data)
+
+data <- data %>%
+  mutate(gradeyear_binned = ifelse(gradeyear_binned == "highschool", "highschool", ifelse(gradeyear_binned == "postsec", "postsec", NA)),
+         postcode_povertycoded = fct_recode(postcode_povertycoded, "Med/High" = "High", "Med/High" = "Medium"),
+         postcode_povertycoded = factor(postcode_povertycoded, levels = c("Low", "Med/High")),
+         fgd_participant_dummy = factor(fgd_participant_dummy, levels = c("1", "0")),
+         timeline_binned = factor(timeline_binned, levels = c("fallwinter2020", "earlywinter2021", "laterwinter2021", "earlyspring2021", "latespring2021")),
+         date_submitted = lubridate::dmy(Date_submitted)
+         )
+```
+
+```{r}
+data %>%
+  mutate(weekly_responses = floor_date(
+    date_submitted,
+    unit = "week"
+  ))%>%
+  #group_by(gradeyear_binned)%>%
+  #count(weekly_responses)
+  ggplot(aes(
+    x=weekly_responses,
+    fill=timeline_binned
+  ))+
+  geom_histogram(binwidth = 2)+
+  facet_zoom(ylim = c(0,20))+
+  facet_wrap(~gradeyear_binned)
+```
+
+
+```{r organize table data}
+table_data <- data %>%
+  mutate(participant = TRUE,
+         ethnicity = ifelse(ethnicity == "white", "white", ifelse(is.na(ethnicity), NA, "not white")),
+         pronouns_binned = ifelse(is.na(pronouns_binned)|pronouns_binned == "missing"|pronouns_binned=="refused", NA, 
+                                  ifelse(pronouns_binned == "he/him", "he/him", "she/her or NB"))
+         )%>%
+  dplyr::select(participant, pronouns_binned, gradeyear_binned, ethnicity, postcode_povertycoded, fgd_participant_dummy,
+         cantril_prepandemic, cantril_now, chud9_total, edinborough_scale, workload_scale, playscale, creative_engagementscale, 
+         sleepscale, physactivity_scale, overall_dietqual)%>%
+  #filter(fgd_participant_dummy != "1")%>%
+  select(-fgd_participant_dummy)%>%
+  labelled::set_variable_labels(
+    #change all variable labels to Title Case
+    .labels = snakecase::to_title_case(names(.), abbreviations = c("PA")),
+    sleepscale = "Sleep Quality", 
+    playscale = "Leisure Activities", 
+    creative_engagementscale = "Creative Engagement",
+    physactivity_scale = "Physical Activity",
+    overall_dietqual = "Diet Quality",
+    participant = "n",
+    ethnicity = "Racialization",
+    postcode_povertycoded = "Neighbourhood Poverty Rate", 
+    cantril_prepandemic = "Pre-pandemic Life Satisfaction",
+    cantril_now = "Current Life Satisfaction", 
+    chud9_total = "Mental Distress", 
+    edinborough_scale = "Resilience",
+    workload_scale = "Work Load"
+    )
+```
+
+
+```{r make variable lists}
+listVars <- c("cantril_prepandemic", "cantril_now", "chud9_total", "edinborough_scale", "playscale", "sleepscale", "physactivity_scale", "overall_dietqual")
+
+demoVars <- c("age", "gradeyear_binned", "pronouns_binned", "ethnicity", "postcode_povertycoded", "postcode_COVIDhotzones")
+
+wellBeingVars <- c("sleephours_group", "dietqual_group", "chud_groups", "physactivity_yesterday_mins", "physactivitynow_vsprepandemic", 
+                   "personalcare_minutes", "personalcarenow_vsprepandemic", "socmed_freq")
+```
+
+
+```{r for cronbach's}
+chudVars <- c("worried", "sad", "pain", "tired", "annoyed", "candoschoolwork", "cansleep", "dailyroutine", "canjoinactivities")
+
+edinVars <- c("optimistic", "useful", "relaxed", "dealingwellwproblems", "thinkingclearly", "closetoppl", "decisive")
+
+workloadVars <- c("paidjob_freq_coded", "volunteering_freq_coded", "leadershipandactivism_freq_coded", "schoolwork_load_coded")
+
+physactVars <- c("Payesterday_scale", "runwalkcycle_coded", "skate_coded", "gymandsports_coded", "danceandmartialarts_coded", "domesticlabour_coded")
+
+playVars <- c("runwalkcycle_coded", "skate_coded", "gymandsports_coded", "danceandmartialarts_coded","singleplayergames_coded", "multiplayergames_coded", "hobbies", "gamesandpuzzles")
+
+createVars <- c("cookandbake", "visualart", "playingmusic", "creativewriting")
+
+sleepVars <- c("sleepscale1_lastnightbedtime", "sleepscale2_lastnightsleephours", "sleepscale3_usualweekdaybedtime", "sleepscale4_usualweekendbedtime", "sleepscale5_disruptedsleep", "sleepscale6_sleepquality", "sleepscale7_prepanvspansleep")
+
+dietVars <- c("darkgreen_veg",	"colourfulrootveg",	"other_veg",	"citrusandberries",	"other_fruit",	"fullfat_dairy",	"reducedfat_dairy",	"eggs",	"veg_protein",	"seafood",	"processed_meat",	"other_meat",	"refined_grains",	"whole_grains",	"sweetbaked_goods",	"deepfriedfoods",	"ssbs",	"juiceandsmoothies")
+
+```
+
+```{r cronbach's}
+scales <- list(chudVars, edinVars, workloadVars, physactVars, playVars, createVars, sleepVars, dietVars)
+
+scalenames <- c("chud9_total", "edinborough_scale", "workload_scale", "physactivity_scale", "playscale", "creative_engagementscale", "sleepscale", "overall_dietqual")
+
+output <- c("")
+
+for (scale in scales) {
+  
+  dat <- data %>%
+    select(all_of(scale))
+  
+  cron <- cronbach.alpha(data = dat, standardized = FALSE, na.rm = TRUE)
+  
+  output <- c(output, cron$alpha)
+}
+
+output <- output[-1]
+
+table_cron <- data.frame(rbind(output))%>%
+  mutate_if(is.character, as.numeric)
+colnames(table_cron) <- scalenames
+
+table_cron <- table_cron%>%
+  labelled::set_variable_labels(
+    #change all variable labels to Title Case
+    .labels = snakecase::to_title_case(names(.), abbreviations = c("PA")),
+    sleepscale = "Sleep Quality", 
+    playscale = "Leisure Activities", 
+    creative_engagementscale = "Creative Engagement",
+    physactivity_scale = "Physical Activity",
+    overall_dietqual = "Diet Quality",
+    chud9_total = "Mental Distress", 
+    edinborough_scale = "Resilience",
+    workload_scale = "Work Load"
+    )
+
+str(table_cron)
+```
+
+
+```{r normality tests}
+#test variables for normal distribution
+table_data %>%
+  shapiro_test(listVars)
+```
+
+
+```{r}
+tablexx <- data %>%
+  mutate(participant = TRUE)%>%
+  select(participant, fgd_participant_dummy, demoVars, wellBeingVars)%>%
+  tbl_summary(
+    by = fgd_participant_dummy,
+    missing = "no",
+    type = age ~ "continuous"
+    )%>%
+  add_overall()%>%
+  add_p(everything()~"kruskal.test")%>%
+  add_q()%>%
+  bold_p(t=0.05, q = TRUE)%>%
+  modify_header(p.value = "**p**", q.value = "**q**",
+                stat_by = "**{level}**")%>%
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Focus Group Participant**")%>%
+  as_gt()
+
+#gt::gtsave(tablexx, here("results", "tablexx.pdf"))
+```
+
+
+```{r}
+statistics <- c(participant ~ "{n}",
+                all_continuous() ~ "{median} ({p25}, {p75})"#,
+                #cantril_prepandemic ~ "{median} ({p25}, {p75})", 
+                #cantril_now ~ "{median} ({p25}, {p75})", 
+                #chud9_total ~ "{median} ({p25}, {p75})", 
+                #edinborough_scale ~ "{median} ({p25}, {p75})", 
+                #playscale ~ "{median} ({p25}, {p75})", 
+                #creative_engagementscale ~ "{median} ({p25}, {p75})", 
+                #sleepscale ~ "{median} ({p25}, {p75})", 
+                #physactivity_scale ~ "{median} ({p25}, {p75})", 
+                #overall_dietqual ~ "{median} ({p25}, {p75})"
+                )
+
+type <- c(
+  workload_scale ~ "continuous",
+  cantril_prepandemic ~ "continuous",
+  cantril_now ~ "continuous"
+          )
+
+data %>%
+  get_summary_stats(
+    cantril_prepandemic, cantril_now, chud9_total, edinborough_scale, playscale, sleepscale, physactivity_scale, overall_dietqual,
+    type = "common"
+  )
+
+data %>%
+  filter(lastnight_sleephours < 8 )%>%
+  count(response_id)
+
+#561 responses
+#478 lastnight_sleephours >0
+#131 lastnight_sleephours <8
+#347 lastnight_sleephours >=8
+
+prop.table(table(data$screensnow_vsprepandemic))
+
+```
+
+
+```{r}
+t <- table_data %>%
+  dplyr::select(-pronouns_binned, -gradeyear_binned, -ethnicity, -postcode_povertycoded)%>%
+  tbl_summary(
+    #by = fgd_participant_dummy,
+    type = type,
+    missing = "no",
+    statistic = statistics
+  )%>%
+  modify_header(
+    update = all_stat_cols() ~ "**Overall**"
+  )%>%
+  add_n(
+    statistic = "{p_miss}",
+    col_label = "**Missing** (%)",
+    last = FALSE
+    ) %>%
+  bold_labels()%>%
+  modify_footnote(update = everything() ~ NA)
+  
+
+t1 <- table_data %>%
+  dplyr::select(-gradeyear_binned, -ethnicity, -postcode_povertycoded)%>%
+  tbl_summary(
+    by = pronouns_binned,
+    type = type,
+    missing = "no",
+    statistic = statistics
+  )%>%
+  bold_labels()%>%
+  add_p(everything()~"kruskal.test")%>%
+  add_q()%>%
+  bold_p(t=0.05, q = TRUE)%>%
+  modify_header(p.value = "**p**", q.value = "**q**",
+                stat_by = "**{level}**")
+
+t2 <- table_data %>%
+  dplyr::select(-pronouns_binned, -ethnicity, -postcode_povertycoded)%>%
+  tbl_summary(
+    by = gradeyear_binned,
+    type = type,
+    missing = "no",
+    statistic = statistics
+  )%>%
+  bold_labels()%>%
+  add_p(everything()~"kruskal.test")%>%
+  add_q()%>%
+  bold_p(t=0.05, q = TRUE)%>%
+  modify_header(p.value = "**p**", q.value = "**q**",
+                stat_by = "**{level}**")
+
+t3 <- table_data %>%
+  dplyr::select(-pronouns_binned, -gradeyear_binned, -postcode_povertycoded)%>%
+  tbl_summary(
+    by = ethnicity,
+    type = type,
+    missing = "no",
+    statistic = statistics
+  )%>%
+  bold_labels()%>%
+  add_p(everything()~"kruskal.test")%>%
+  add_q()%>%
+  bold_p(t=0.05, q = TRUE)%>%
+  modify_header(p.value = "**p**", q.value = "**q**",
+                stat_by = "**{level}**")
+
+t4 <- table_data %>%
+  dplyr::select(-pronouns_binned, -gradeyear_binned, -ethnicity)%>%
+  tbl_summary(
+    by = postcode_povertycoded,
+    type = type,
+    missing = "no",
+    statistic = statistics
+  )%>%
+  bold_labels()%>%
+  add_p(everything()~"kruskal.test")%>%
+  add_q()%>%
+  bold_p(t=0.05, q = TRUE)%>%
+  modify_header(p.value = "**p**", q.value = "**q**",
+                stat_by = "**{level}**")
+
+t_cron <- table_cron %>%
+  tbl_summary(
+    type = everything()~ "continuous",
+    statistic = everything() ~ "{p0}"
+  )%>%
+  modify_header(
+    update = all_stat_cols() ~ ""
+  )%>%
+  modify_footnote(update = everything() ~ NA)
+
+table <- tbl_merge(
+  tbls = list(t,t1,t2,t3,t4, t_cron),
+  tab_spanner = c("Summary", "Pronouns", "Educational Group", "Racialization", "Neighbourhood Poverty Rate", "Chronbach's Alpha ")
+) %>%
+  as_gt()
+
+gt::gtsave(table, here("results", "tableyy.pdf"))
+
+```
+
+```{r}
+table_data %>%
+  #dplyr::select()%>%
+  tbl_summary(
+    by = timeline_binned,
+    missing = "no",
+    statistic = statistics
+  )%>%
+  bold_labels()%>%
+  add_p(everything()~"kruskal.test")%>%
+  add_q()%>%
+  bold_p(t=0.05, q = TRUE)%>%
+  modify_header(p.value = "**p**", q.value = "**q**",
+                stat_by = "**{level}**")
+```
+
+
+
+
+
+
+```{r}
+data$nature <- as.factor(data$nature)
+data$nature_simple <- as.factor(data$nature_simple)
+#data$nature_simple <- as.factor(data$nature_simple)
+data$friends_inperson <- as.factor(data$friends_inperson)
+
+#data %<>% drop_na(cantril_prepandemic, edinborough_scale)
+
+#mod <- lm(data$edinborough_scale ~ data$cantril_prepandemic)
+#data$predicted <- predict(mod)
+#data$residuals <- residuals(mod)
+#set.seed(0)
+#data$jit <- runif(nrow(data), -0.5, 0.5)  
+
+#df <- data %>%
+  #filter(pronouns_binned %in% c("he/him", "she/her", "NB/pan"))%>%
+  #drop_na(nature, friends_inperson)
+```
+
+
+
+```{r}
+  
+p <- df %>%
+  ggplot()+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=as.factor(closetoppl), alpha=0.2, size = 1))+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   colour = as.factor(closetoppl), size = 1), alpha = 0.2, lineend = "round", 
+               data = df %>% filter(closetoppl %in% c(3,4,5)),
+               show.legend = F)+
+  stat_smooth(data=within(df, nature_simple <- NULL),
+              aes(x=cantril_prepandemic, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=F)+
+  scale_colour_manual(values = c("grey", "grey", "grey", "blue4", "blue4", "blue4"))+
+  scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = "none", size = "none", colour = "none")+
+  scale_y_continuous(limits = c(5,35))+
+  labs(x = "Pre-COVID Life Satisfaction", y = "Resilience Score")+
+  facet_wrap(~nature_simple)
+
+p
+#ggsave("cantril_prepandemic-edinborough_scale.jpg", width = 8, height = 6, units = "in")
+```
+
+```{r}
+  
+p <- df %>%
+  ggplot()+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=as.factor(closetoppl), alpha=0.2, size = 1))+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   colour = as.factor(closetoppl), size = 1), alpha = 0.2, lineend = "round", 
+               data = df %>% filter(closetoppl %in% c(3,4,5)),
+               show.legend = F)+
+  stat_smooth(data=within(df, nature_simple <- NULL),
+              aes(x=cantril_prepandemic, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=F)+
+  scale_colour_manual(values = c("grey", "grey", "grey", "blue4", "blue4", "blue4"))+
+  scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = "none", size = "none", colour = "none")+
+  scale_y_continuous(limits = c(5,35))+
+  labs(x = "Pre-COVID Life Satisfaction", y = "Resilience Score")+
+  facet_wrap(~nature_simple)
+
+p
+#ggsave("cantril_prepandemic-edinborough_scale.jpg", width = 8, height = 6, units = "in")
+```
+
+
+```{r}
+
+p1 <- df %>%
+  ggplot()+
+  stat_smooth(data=within(df, friends_online <- NULL),
+              aes(x=cantril_prepandemic, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=F)+
+  scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = "none", size = "none", colour = "none")+
+  scale_y_continuous(limits = c(5,35))+
+  labs(x = "Pre-COVID Life Satisfaction", y = "Resilience Score")
+p1
+
+p2 <- p1 +
+  #geom_point(data = df %>% filter (nature %in% c("0","1", "2", "3")), aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=nature, alpha=0.2, size = 1))+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=nature, alpha=0.2, size = 1))+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   colour = nature, size = 1), alpha = 0.2, lineend = "round", 
+               data = df %>% filter(nature %in% c(4,5)),
+               show.legend = F)+
+  scale_colour_manual(values = c("grey", "grey", "grey", "grey", "#20963e", "#20963e"))+
+  facet_wrap(friends_inperson~friends_online)
+p2
+#ggsave("nature_hi-v-lo.jpg", width = 8, height = 6, units = "in")
+
+p3 <- p1 +
+  #geom_point(data = df %>% filter (nature %in% c("0","1", "2", "3")), aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=nature, alpha=0.2, size = 1))+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=as.factor(friends_inperson), alpha=0.2, size = 1))+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   colour = friends_inperson, size = 1), alpha = 0.2, lineend = "round", 
+               data = df %>% filter(friends_inperson %in% c(2,3,4,5)),
+               show.legend = F)+
+    scale_colour_manual(values = c("grey", "grey", "grey", "#20963e", "#20963e", "#20963e"))+
+  facet_wrap(~friends_online)
+p3
+#ggsave("time-with-friends.jpg", width = 8, height = 6, units = "in")
+
+```
+
+```{r}
+df %>%
+  drop_na(nature, friends_inperson_simple)%>%
+  ggplot()+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=nature_simple, alpha=0.2, size = 1))+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   colour = nature_simple, size = 1), alpha = 0.2, lineend = "round", 
+               data = df %>% filter(nature %in% c(4,5)),
+               show.legend = F)+
+  #geom_hline(aes(yintercept = 20))+
+  stat_smooth(data=within(df, friends_inperson_simple <- NULL),
+              aes(x=cantril_prepandemic, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=F)+
+  scale_colour_manual(values = c("grey", "#20963e"), name = "Nature", labels = c("Low", "High"))+
+  scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = F, size = F)+
+  labs(x = "Pre-COVID Life Satisfaction", y = "Resilience Score")
+#ggsave("nature.jpg", width = 8, height = 6, units = "in")
+```
+
+```{r}
+df %>%
+  drop_na(nature, friends_inperson_simple)%>%
+  ggplot()+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=as.factor(friends_inperson_simple), alpha=0.2, size = 1))+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   colour = as.factor(friends_inperson_simple), size = 1), alpha = 0.2, lineend = "round", 
+               data = df %>% filter(friends_inperson_simple == 1),
+               show.legend = F)+
+  #geom_hline(aes(yintercept = 20))+
+  stat_smooth(data=within(df, nature_simple <- NULL),
+              aes(x=cantril_prepandemic, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=F)+
+  scale_colour_manual(values = c("grey", "#20963e"), name = "Nature", labels = c("Low", "High"))+
+  scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = F, size = F)+
+  labs(x = "Pre-COVID Life Satisfaction", y = "Resilience Score")+
+  facet_wrap(~nature_simple)
+ggsave("nature_friends_inperson.jpg", width = 12, height = 6, units = "in")
+```
+
+
+
+
+```{r}
+df %>%
+  drop_na(friends_inperson, nature_simple)%>%
+  ggplot()+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=nature, alpha=0.2, size = 1))+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   colour = nature, size = 1), alpha = 0.2, lineend = "round", 
+               data = df %>% filter(nature %in% c(4,5)),
+               show.legend = F)+
+  stat_smooth(aes(x=cantril_prepandemic, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=F)+
+  scale_colour_manual(values = c("grey", "grey", "grey", "grey", "#20963e", "#20963e"))+
+  scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = F, size = F)
+
+```
+
+```{r}
+data$talktofamily_inhome  <- as.factor(data$talktofamily_inhome )
+
+df <- data %>%
+  filter(pronouns_binned %in% c("he/him", "she/her", "NB/pan"))
+
+df %>%
+  drop_na(talktofamily_inhome)%>%
+  ggplot()+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour=talktofamily_inhome , alpha=0.2, size = 1))+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   colour = talktofamily_inhome , size = 1), alpha = 0.2, lineend = "round", 
+               data = df %>% filter(talktofamily_inhome  %in% c(5)),
+               show.legend = F)+
+  stat_smooth(aes(x=cantril_prepandemic, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=F)+
+  scale_colour_manual(values = c("grey", "grey", "grey", "grey", "grey", "#20963e"))+
+  scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = F, size = F)
+
+```
+
+Probably shouldn't be doing a PCA for categorical variables
+```{r}
+data <- read.csv("cantec19_july2021norepeatsubmissions.csv")
+
+data <- data %>%
+  drop_na(cantril_prepandemic, edinborough_scale)
+
+theme_set(theme_minimal())  # pre-set the bw theme.
+
+mod <- lm(data$edinborough_scale ~ data$cantril_prepandemic)
+data$predicted <- predict(mod)
+data$residuals <- residuals(mod)
+set.seed(0)
+data$jit <- runif(nrow(data), -0.5, 0.5) 
+
+pca_variables <- c("response_id", "jit", "predicted", "residuals", "timeline_binned", 
+                   "postcode_COVIDhotzones", "postcode_povertycoded",
+                   "white", "nature_simple",
+                   "edinborough_scale",  "cantril_prepandemic", "chud_feelings", "chud_behav", "chud_groups",
+                    "nature", "Payesterday_scale",  "overall_dietqual",
+                                                              "talktofamily_inhome", "friends_inperson", "friends_online",
+                                                              "personalcaremins_dummy", "age", "foodsec_total", 
+                                                              "socmedfreq_scale", "sleepscale" )
+
+df_pca <- data %>%
+  dplyr::select(pca_variables)%>%
+  drop_na(pca_variables)
+
+df_pca_meas <-  df_pca[,15:25]
+
+str(df_pca_meas)
+
+df_pca_info <- df_pca[,1:14]
+
+
+pca_cantec <- prcomp(df_pca_meas, scale. = TRUE)
+s <- summary(pca_cantec)
+structure(pca_cantec)
+screeplot(pca_cantec)
+
+
+biplot(pca_cantec, xlab=paste("PCA 1 (", round(s$importance[2]*100, 1), "%)", sep = ""), ylab=paste("PCA 2 (", round(s$importance[5]*100, 1), "%)", sep = ""))
+
+fviz_pca_var(pca_cantec,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+
+n.pc1 <- ifelse(pca_cantec$rotation[,1] > 0, yes=-0.01, no=pca_cantec$rotation[,1]-0.01)
+#n.pc2 <- ifelse(pca_cantec$rotation[,2] > 0, yes=-0.01, no=pca_cantec$rotation[,2]-0.01)
+
+b1 <- barplot(pca_cantec$rotation[,1], main="PC 1 Loadings Plot", las=2, axisnames=FALSE)
+abline(h=0) # Add horizontal line
+text(x=b1, y=n.pc1, labels=c("nature","physical activity","diet quality","time with family","time with friends",
+                          "friends online", "personal care", "age", "food insecurity", "social media", 
+                          "poor sleep"), adj=1, srt=90, xpd=TRUE) # Add variable names
+
+dat_bar <- as.tibble(pca_cantec$rotation[,1], rownames = "variable")
+
+b1 <- dat_bar %>%
+  ggplot(aes(x=variable, y=value))+
+  geom_bar(stat="identity")+
+  coord_flip() +  # horizontal bars
+    geom_text(aes(y = 0, label = c(" time in nature "," physical activity "," diet quality "," time with family ",
+                                   " time with friends in person",
+                          " time with friends online ", " personal care time ", " age ", " food insecurity ", 
+                          " social media frequency ", 
+                          " poor sleep "), hjust = as.numeric(value > 0))) +  # label text based on value
+    theme(axis.text.y = element_blank(), axis.title = element_blank())+
+  scale_x_discrete(limits = rev(c("nature", "Payesterday_scale",  "overall_dietqual",
+                                                              "talktofamily_inhome", "friends_inperson", "friends_online",
+                                                              "personalcaremins_dummy", "age", "foodsec_total", 
+                                                              "socmedfreq_scale", "sleepscale")))
+
+
+df_pca$axis1 <- pca_cantec$x[,1]
+
+```
+
+```{r}
+p1 <- df_pca %>%
+  ggplot()+
+  geom_point(aes(x=axis1 , y=edinborough_scale, alpha=0.2, size = 1))+
+  stat_cor(aes(x=axis1, y=edinborough_scale), label.y = 30)+
+  stat_smooth(aes(x=axis1, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=T)+
+  #scale_colour_manual(values = c("grey", "grey", "grey", "blue4", "blue4", "blue4"))+
+  #scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = "none", size = "none", colour = "none")+
+  scale_y_continuous(limits = c(5,35))+
+  labs(x = paste("PCA 1 (", round(s$importance[2]*100, 1), "%)", sep = ""), y = "Resilience Score")
+  
+p1
+
+p <- df_pca %>%
+  ggplot()+
+  geom_point(aes(x=axis2 , y=edinborough_scale, colour=as.factor(nature_simple), alpha=0.2, size = 1))+
+  stat_cor(aes(x=axis2, y=edinborough_scale), label.y = 30)+
+  stat_smooth(aes(x=axis2, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=T)+
+  #scale_colour_manual(values = c("grey", "grey", "grey", "blue4", "blue4", "blue4"))+
+  #scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  guides(alpha = "none", size = "none")+
+  scale_y_continuous(limits = c(5,35))+
+  labs(x = paste("PCA 2 (", round(s$importance[5]*100, 1), "%)", sep = ""), y = "Resilience Score")
+  
+p
+
+library(cowplot)
+cowplot::plot_grid(p1, b1, ncol = 1)
+ggsave("pca_with_loadings.jpg", width = 6, height = 12, units = "in")
+
+
+
+
+```
+
+```{r}
+normf = function(x) {
+  (x-min(x))/(max(x)-min(x))
+}
+
+df_pca$normalized <- normf(df_pca$axis1) 
+df_pca$alph <- normf(abs(df_pca$axis1))
+
+panel_height = unit(1,"npc") - sum(ggplotGrob(b1)[["heights"]][-3]) - unit(1,"cm")
+
+p2 <- df_pca %>%
+  ggplot()+
+  geom_point(aes(x=cantril_prepandemic + jit, y=edinborough_scale, colour = normalized), alpha = 0.5, size=3, shape = 16)+
+  geom_segment(aes(x=cantril_prepandemic + jit, y=edinborough_scale, xend=cantril_prepandemic+jit, yend=predicted+jit, 
+                   size = 1, alpha = alph, colour=normalized), lineend = "round", 
+                   data = df_pca %>% filter(alph  > 0.32),
+                   show.legend = F)+
+  stat_smooth(aes(x=cantril_prepandemic, y=edinborough_scale), linetype = "dotted", colour = "black", method=lm, se=F)+
+  stat_cor(aes(x=cantril_prepandemic, y=edinborough_scale), label.y = 30)+
+  scale_colour_viridis(option = "magma", direction = -1,
+                       name = "PC1")+
+  #scale_colour_gradient2(low = "grey", high = "darkgreen", na.value = NA, mid =0.5)+
+  scale_x_continuous(limits = c(0,10), breaks = c(1:10))+
+  scale_alpha(range=c(0.1,0.4), na.value = 0)+
+  guides(alpha = "none", size = "none", colour  = guide_colorbar(barheight=unit(5, "in")))+
+  labs(x = "Pre-pandemic life satisfaction", y = "Resilience")+
+  theme(legend.text = element_blank())
+p2
+
+ggsave("cantril_edinburgh_PC1.jpg", width = 8, height = 6, units = "in")
+
+b2 <- dat_bar %>%
+  ggplot(aes(x=variable, y=value, fill=value))+
+  geom_bar(stat="identity")+
+    geom_text(aes(y = 0, label = c(" more time in nature "," more physical activity "," improved diet quality ",
+                                   " more time with family ",
+                                   " more time with friends in person ",
+                          " more time with friends online ", " more personal care time ", " increasing age ", 
+                          " increasing food insecurity ", 
+                          " increasing social media frequency ", 
+                          " worse sleep "), hjust = as.numeric(value > 0)), angle = 90) +  # label text based on value
+    theme(axis.text.x = element_blank(), axis.title = element_blank())+
+  scale_x_discrete(limits = c("nature", "Payesterday_scale",  "overall_dietqual",
+                                                              "talktofamily_inhome", "friends_inperson", "friends_online",
+                                                              "personalcaremins_dummy", "age", "foodsec_total", 
+                                                              "socmedfreq_scale", "sleepscale"))+
+  scale_fill_viridis(option = "magma", direction = -1)+
+  guides(fill = "none")
+
+b2
+
+
+cowplot::plot_grid(p2, b2, ncol = 2, rel_widths = c(2,1))
+ggsave("corr_with_loadings.jpg", width = 12, height = 6, units = "in")
+
+anova.obs <- lm(edinborough_scale ~ cantril_prepandemic + axis1, df_pca)
+summary(anova.obs)
+```
+
+
+
+```{r}
+#data <- read.csv("cantec19_july2021norepeatsubmissions.csv")
+
+
+pca_variables <- c("response_id", "nature_simple",   
+                    "closetoppl", "cantril_now",
+                   "talktofamily_inhome", "friends_online", "friends_inperson", 
+                   "edinborough_scale", "cantril_prepandemic",
+                   "overall_dietqual", "sleepscale",
+                   "ethnicity",
+                   "nature", "Payesterday_scale", "socmedfreq_scale",
+                     "foodsec_total", "personalcaremins_dummy")
+
+df_pca <- data %>%
+  dplyr::select(pca_variables)%>%
+  drop_na(pca_variables)
+
+str(df_pca)
+
+#df_pca <- df_pca %>%
+#  dplyr::mutate(across(c(nature, closetoppl), factor))
+
+
+
+summary(df_pca)
+
+#df_pca <- t(df_pca)
+
+df_pca_meas <-  df_pca[,6:16]
+
+df_pca_info <- df_pca[,1:5]
+
+summary(df_pca_meas)
+
+res.famd <- FAMD(df_pca_meas, graph = FALSE)
+
+res.famd$eig
+
+fviz_screeplot(res.famd, addlabels = TRUE, ylim = c(0, 45))
+
+# Plot of variables
+fviz_famd_var(res.famd, repel = TRUE,
+              col.var = "contrib", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+# Contribution to the first dimension
+fviz_contrib(res.famd, "var", axes = 1)
+# Contribution to the second dimension
+fviz_contrib(res.famd, "var", axes = 2)
+
+fviz_famd_ind(res.famd, 
+             habillage = "nature", # color by groups 
+             #palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+             addEllipses = TRUE, ellipse.type = "confidence", 
+             repel = TRUE,
+             geom = "point" # Avoid text overlapping
+             ) 
+
+fviz_ellipses(res.famd, c("nature", "Payesterday_scale"), repel = TRUE,
+              geom = "point")
+
+res.desc <- dimdesc(res.famd, axes = c(1,2))
+# Description of dimension 1
+res.desc[[1]]
+# Description of dimension 2
+res.desc[[2]]
+
+all.var <- get_famd_var(res.famd)
+all.var
+
+fviz_famd_var(res.famd, "quanti.var", col.var = "contrib", 
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE)
+```
+
+
+
+
+
+
+
