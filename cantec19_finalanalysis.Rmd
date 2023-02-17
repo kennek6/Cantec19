@@ -46,13 +46,16 @@ summary(data$firsttime_survey)
 table_data <- data %>%
   mutate(participant = TRUE,
          ethnicity = ifelse(ethnicity == "white", "white", ifelse(is.na(ethnicity), NA, "not white")),
-         pronouns_binned = ifelse(is.na(pronouns_binned)|pronouns_binned == "missing"|pronouns_binned=="refused", NA, 
-                                  ifelse(pronouns_binned == "he/him", "he/him", "she/her or NB"))
+         pronouns_binned = ifelse(is.na(pronouns_binned)|pronouns_binned == "missing"|pronouns_binned=="refused", 
+                                  NA, pronouns_binned), 
+         gradeyear_binned = ifelse(gradeyear_binned == "" | collegeoruni_program == "Grade 7", NA, 
+                                   ifelse(gradeyear_binned == "Other", "highschool", gradeyear_binned))
          )%>%
-  dplyr::select(participant, pronouns_binned, gradeyear_binned, ethnicity, postcode_povertycoded, fgd_participant_dummy,
-                foodsec_totaldummy,
-         cantril_prepandemic, cantril_now, chud9_total, edinborough_scale, workload_scale, playscale, creative_engagementscale, 
-         sleepscale, physactivity_scale, overall_dietqual)%>%
+  dplyr::select(participant, pronouns_binned, gradeyear_binned, ethnicity, postcode_povertycoded, 
+                fgd_participant_dummy, foodsec_totaldummy,cantril_prepandemic, cantril_now, socmedfreq_scale, 
+                chud9_total,
+                edinborough_scale, workload_scale, playscale, creative_engagementscale, sleepscale, 
+                physactivity_scale, overall_dietqual)%>%
   #filter(fgd_participant_dummy != "1")%>%
   select(-fgd_participant_dummy)%>%
   labelled::set_variable_labels(
@@ -62,6 +65,7 @@ table_data <- data %>%
     playscale = "Leisure Activities", 
     creative_engagementscale = "Creative Engagement",
     physactivity_scale = "Physical Activity",
+    socmedfreq_scale = "Social Media Use",
     overall_dietqual = "Diet Quality",
     participant = "n",
     ethnicity = "Racialization",
@@ -153,9 +157,12 @@ table_data %>%
 
 
 ```{r}
+data$fgd_participant_dummy <- forcats::fct_explicit_na(data$fgd_participant_dummy)
+
 tablexx <- data %>%
   mutate(participant = TRUE)%>%
-  select(participant, fgd_participant_dummy, demoVars, wellBeingVars)%>%
+  select(participant, fgd_participant_dummy, all_of(demoVars), 
+         all_of(wellBeingVars))%>%
   tbl_summary(
     by = fgd_participant_dummy,
     missing = "no",
@@ -166,13 +173,13 @@ tablexx <- data %>%
   add_q()%>%
   bold_p(t=0.05, q = TRUE)%>%
   modify_header(p.value = "**p**", q.value = "**q**",
-                stat_by = "**{level}**")%>%
+                all_stat_cols() ~ "**{level}**")%>%
   modify_spanning_header(c("stat_1", "stat_2") ~ "**Focus Group Participant**")%>%
   as_gt()
 
 tablexx
 
-gt::gtsave(tablexx, here("results", "tablexx.pdf"))
+#gt::gtsave(tablexx, here("results", "tablexx.pdf"))
 ```
 
 
@@ -193,12 +200,14 @@ statistics <- c(participant ~ "{n}",
 type <- c(
   workload_scale ~ "continuous",
   cantril_prepandemic ~ "continuous",
-  cantril_now ~ "continuous"
+  cantril_now ~ "continuous",
+  socmedfreq_scale ~ "continuous"
           )
 
 data %>%
   get_summary_stats(
-    cantril_prepandemic, cantril_now, chud9_total, edinborough_scale, playscale, sleepscale, physactivity_scale, overall_dietqual,
+    cantril_prepandemic, cantril_now, chud9_total, edinborough_scale, playscale, sleepscale, physactivity_scale,
+    socmedfreq_scale, overall_dietqual,
     type = "common"
   )
 
@@ -250,7 +259,7 @@ t1 <- table_data %>%
   add_q()%>%
   bold_p(t=0.05, q = TRUE)%>%
   modify_header(p.value = "**p**", q.value = "**q**",
-                stat_by = "**{level}**")
+                all_stat_cols() ~ "**{level}**")
 
 t2 <- table_data %>%
   dplyr::select(-pronouns_binned, -ethnicity, -postcode_povertycoded, -foodsec_totaldummy)%>%
@@ -265,7 +274,7 @@ t2 <- table_data %>%
   add_q()%>%
   bold_p(t=0.05, q = TRUE)%>%
   modify_header(p.value = "**p**", q.value = "**q**",
-                stat_by = "**{level}**")
+                all_stat_cols() ~ "**{level}**")
 
 t3 <- table_data %>%
   dplyr::select(-pronouns_binned, -gradeyear_binned, -postcode_povertycoded, -foodsec_totaldummy)%>%
@@ -280,7 +289,7 @@ t3 <- table_data %>%
   add_q()%>%
   bold_p(t=0.05, q = TRUE)%>%
   modify_header(p.value = "**p**", q.value = "**q**",
-                stat_by = "**{level}**")
+                all_stat_cols() ~ "**{level}**")
 
 t4 <- table_data %>%
   dplyr::select(-pronouns_binned, -gradeyear_binned, -ethnicity, -foodsec_totaldummy)%>%
@@ -295,7 +304,7 @@ t4 <- table_data %>%
   add_q()%>%
   bold_p(t=0.05, q = TRUE)%>%
   modify_header(p.value = "**p**", q.value = "**q**",
-                stat_by = "**{level}**")
+                all_stat_cols() ~ "**{level}**")
 
 t_cron <- table_cron %>%
   tbl_summary(
@@ -313,8 +322,45 @@ table <- tbl_merge(
 ) %>%
   as_gt()
 
-gt::gtsave(table, here("results", "tableyy.pdf"))
+gt::gtsave(table, here::here("results", "table2.png"), vwidth = 2000, vheight = 1000)
 
+```
+```{r}
+variables <- table_data %>%
+  dplyr::select(-participant, -pronouns_binned, -gradeyear_binned, -ethnicity, -postcode_povertycoded, -foodsec_totaldummy)%>%
+  colnames()
+
+my_comparisons <- list(c("he/him", "she/her"), c("he/him", "NB/pan"), c("NB/pan", "she/her"))
+
+plots <- list()
+
+for (each in variables) {
+  
+  df <- table_data %>%
+    drop_na(pronouns_binned)%>%
+    pivot_longer(cols = variables, names_to = "measure", values_to = "value")%>%
+    filter(measure == each)%>%
+    drop_na(value, gradeyear_binned)
+  
+  p <- df %>%
+    ggplot()+
+    aes(
+      x = pronouns_binned,
+      y = value
+    )+
+    geom_violin()+
+    geom_boxplot(width = 0.2)+
+    #stat_compare_means(comparisons = my_comparisons)+
+    stat_compare_means(method = "kruskal.test")+
+    labs(title = each)
+  
+   plots[[each]] <- p
+   
+  # ggsave(here::here("figures", paste0(each, ".jpeg")))
+
+}
+
+plots
 ```
 
 
